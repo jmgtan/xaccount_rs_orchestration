@@ -7,6 +7,10 @@ Globals:
   Function:
     Timeout: 3
 
+Parameters:
+  TargetAccountRole:
+    Type: String
+
 Resources:
   RSStepFunctionsRole:
     Type: AWS::IAM::Role
@@ -58,7 +62,7 @@ Resources:
               - Effect: Allow
                 Action:
                   - 'sts:AssumeRole'
-                Resource: 'arn:aws:iam::099963820076:role/RSOrchestrationRole'
+                Resource: !Ref TargetAccountRole
 
   CheckRSStatus:
     Type: AWS::Serverless::Function
