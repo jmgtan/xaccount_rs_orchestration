@@ -1,0 +1,240 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  redshift-step-functions
+
+Globals:
+  Function:
+    Timeout: 3
+
+Resources:
+  RSStepFunctionsRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - states.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaRole
+      Policies:
+        - PolicyName: Inline0
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'states:StartExecution'
+                  - "states:DescribeExecution"
+                  - "states:StopExecution"
+                  - "events:PutTargets"
+                  - "events:PutRule"
+                  - "events:DescribeRule"
+                Resource: '*'
+  RSLambdaExecRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - lambda.amazonaws.com
+            Action:
+              - 'sts:AssumeRole'
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: Inline0
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - 'sts:AssumeRole'
+                Resource: 'arn:aws:iam::099963820076:role/RSOrchestrationRole'
+
+  CheckRSStatus:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: CheckRSStatus/
+      Handler: index.handler
+      Runtime: nodejs12.x
+      Role: !GetAtt RSLambdaExecRole.Arn
+
+  PauseRS:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: PauseRS/
+      Handler: index.handler
+      Runtime: nodejs12.x
+      Role: !GetAtt RSLambdaExecRole.Arn
+
+  ResumeRS:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: ResumeRS/
+      Handler: index.handler
+      Runtime: nodejs12.x
+      Role: !GetAtt RSLambdaExecRole.Arn
+
+  ResumeClusterStateMachine:
+    Type: "AWS::StepFunctions::StateMachine"
+    Properties:
+      RoleArn: !GetAtt RSStepFunctionsRole.Arn
+      StateMachineType: STANDARD
+      DefinitionString:
+        !Sub
+          - |-
+            {
+                "StartAt": "CheckCluster",
+                "States": {
+                  "CheckCluster": {
+                    "Type": "Task",
+                    "Resource": "${checkClusterLambdaArn}",
+                    "ResultPath": "$.cluster",
+                    "Next": "ClusterStatusChoice"
+                  },
+                  "ClusterStatusChoice": {
+                    "Type": "Choice",
+                    "Choices": [
+                      {
+                        "Variable": "$.cluster.ClusterStatus",
+                        "StringEquals": "available",
+                        "Next": "Succeed"
+                      },
+                      {
+                        "Variable": "$.cluster.ClusterStatus",
+                        "StringEquals": "paused",
+                        "Next": "ResumeCluster"
+                      },
+                      {
+                        "Variable": "$.cluster.ClusterStatus",
+                        "StringEquals": "resuming",
+                        "Next": "WaitResume"
+                      }
+                    ]
+                  },
+                  "ResumeCluster": {
+                    "Type": "Task",
+                    "Resource": "${resumeClusterLambdaArn}",
+                    "ResultPath": "$.cluster",
+                    "Next": "WaitResume"
+                  },
+                  "WaitResume": {
+                    "Type": "Wait",
+                    "Seconds": 30,
+                    "Next": "CheckCluster"
+                  },
+                  "Succeed": {
+                      "Type": "Succeed"
+                  }
+                }
+              }
+          - { checkClusterLambdaArn: !GetAtt CheckRSStatus.Arn, resumeClusterLambdaArn: !GetAtt ResumeRS.Arn }
+
+  PauseClusterStateMachine:
+    Type: "AWS::StepFunctions::StateMachine"
+    Properties:
+      RoleArn: !GetAtt RSStepFunctionsRole.Arn
+      StateMachineType: STANDARD
+      DefinitionString:
+        !Sub
+          - |-
+            {
+                "StartAt": "CheckCluster",
+                "States": {
+                  "CheckCluster": {
+                    "Type": "Task",
+                    "Resource": "${checkClusterLambdaArn}",
+                    "ResultPath": "$.cluster",
+                    "Next": "ClusterStatusChoice"
+                  },
+                  "ClusterStatusChoice": {
+                    "Type": "Choice",
+                    "Choices": [
+                      {
+                        "Variable": "$.cluster.ClusterStatus",
+                        "StringEquals": "available",
+                        "Next": "PauseCluster"
+                      },
+                      {
+                        "Variable": "$.cluster.ClusterStatus",
+                        "StringEquals": "paused",
+                        "Next": "Succeed"
+                      },
+                      {
+                        "Variable": "$.cluster.ClusterStatus",
+                        "StringEquals": "pausing",
+                        "Next": "WaitPause"
+                      }
+                    ]
+                  },
+                  "PauseCluster": {
+                    "Type": "Task",
+                    "Resource": "${pauseClusterLambdaArn}",
+                    "ResultPath": "$.cluster",
+                    "Next": "WaitPause"
+                  },
+                  "WaitPause": {
+                    "Type": "Wait",
+                    "Seconds": 30,
+                    "Next": "CheckCluster"
+                  },
+                  "Succeed": {
+                      "Type": "Succeed"
+                  }
+                }
+              }
+          - { checkClusterLambdaArn: !GetAtt CheckRSStatus.Arn, pauseClusterLambdaArn: !GetAtt PauseRS.Arn }
+
+  SampleProcessingStateMachine:
+    Type: "AWS::StepFunctions::StateMachine"
+    Properties:
+      RoleArn: !GetAtt RSStepFunctionsRole.Arn
+      StateMachineType: STANDARD
+      DefinitionString:
+        !Sub
+          - |-
+            {
+                "StartAt": "ResumeCluster",
+                "States": {
+                    "ResumeCluster": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::states:startExecution.sync",
+                        "Parameters": {
+                            "StateMachineArn": "${resumeClusterSmArn}",
+                            "Input": {
+                                "clusterId.$": "$.clusterId",
+                                "targetAccountRole.$": "$.targetAccountRole"
+                            }
+                        },
+                        "ResultPath": "$.resumeCluster",
+                        "Next": "SampleProcess"
+                    },
+                    "SampleProcess": {
+                        "Type": "Wait",
+                        "Seconds": 10,
+                        "Next": "PauseCluster"
+                    },
+                    "PauseCluster": {
+                        "Type": "Task",
+                        "Resource": "arn:aws:states:::states:startExecution.sync",
+                        "Parameters": {
+                            "StateMachineArn": "${pauseClusterSmArn}",
+                            "Input": {
+                                "clusterId.$": "$.clusterId",
+                                "targetAccountRole.$": "$.targetAccountRole"
+                            }
+                        },
+                        "End": true
+                    }
+                }
+            }
+          - { resumeClusterSmArn: !Ref ResumeClusterStateMachine, pauseClusterSmArn: !Ref PauseClusterStateMachine }

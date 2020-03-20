@@ -1,0 +1,35 @@
+{
+    "StartAt": "ResumeCluster",
+    "States": {
+        "ResumeCluster": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::states:startExecution.sync",
+            "Parameters": {
+                "StateMachineArn": "arn:aws:states:eu-west-1:694425320816:stateMachine:ResumeCluster",
+                "Input": {
+                    "clusterId.$": "$.clusterId",
+                    "targetAccountRole.$": "$.targetAccountRole"
+                }
+            },
+            "ResultPath": "$.resumeCluster",
+            "Next": "SampleProcess"
+        },
+        "SampleProcess": {
+            "Type": "Wait",
+            "Seconds": 10,
+            "Next": "PauseCluster"
+        },
+        "PauseCluster": {
+            "Type": "Task",
+            "Resource": "arn:aws:states:::states:startExecution.sync",
+            "Parameters": {
+                "StateMachineArn": "arn:aws:states:eu-west-1:694425320816:stateMachine:PauseCluster",
+                "Input": {
+                    "clusterId.$": "$.clusterId",
+                    "targetAccountRole.$": "$.targetAccountRole"
+                }
+            },
+            "End": true
+        }
+    }
+}

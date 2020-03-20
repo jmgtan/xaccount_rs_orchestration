@@ -1,0 +1,45 @@
+{
+    "StartAt": "CheckCluster",
+    "States": {
+      "CheckCluster": {
+        "Type": "Task",
+        "Resource": "arn:aws:lambda:eu-west-1:694425320816:function:redshift-step-functions-CheckRSStatus-15R0TC9IJ08LX",
+        "ResultPath": "$.cluster",
+        "Next": "ClusterStatusChoice"
+      },
+      "ClusterStatusChoice": {
+        "Type": "Choice",
+        "Choices": [
+          {
+            "Variable": "$.cluster.ClusterStatus",
+            "StringEquals": "available",
+            "Next": "PauseCluster"
+          },
+          {
+            "Variable": "$.cluster.ClusterStatus",
+            "StringEquals": "paused",
+            "Next": "Succeed"
+          },
+          {
+            "Variable": "$.cluster.ClusterStatus",
+            "StringEquals": "pausing",
+            "Next": "WaitPause"
+          }
+        ]
+      },
+      "PauseCluster": {
+        "Type": "Task",
+        "Resource": "arn:aws:lambda:eu-west-1:694425320816:function:redshift-step-functions-PauseRS-17GPKE1M90HH0",
+        "ResultPath": "$.cluster",
+        "Next": "WaitPause"
+      },
+      "WaitPause": {
+        "Type": "Wait",
+        "Seconds": 30,
+        "Next": "CheckCluster"
+      },
+      "Succeed": {
+          "Type": "Succeed"
+      }
+    }
+  }
